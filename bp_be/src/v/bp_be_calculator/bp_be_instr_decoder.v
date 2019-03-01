@@ -273,6 +273,20 @@ always_comb
                 decode.irf_w_v      = 1'b1;
                 decode.mtvec_rw_v   = 1'b1;
               end
+            `RV64_MTVAL_CSR_ADDR:
+              begin
+                decode.csr_instr_v  = 1'b1;
+                decode.irf_w_v      = 1'b1;
+                decode.mtval_rw_v   = 1'b1;
+              end
+            `RV64_MEPC_CSR_ADDR:
+              begin
+                decode.csr_instr_v  = 1'b1;
+                decode.irf_w_v      = 1'b1;
+                decode.mepc_rw_v    = 1'b1;
+              end
+            `RV64_FUNCT12_MRET:
+                decode.ret_v = 1'b1;
             default : illegal_instr = 1'b1;
           endcase
         end
@@ -280,18 +294,25 @@ always_comb
     endcase
 
     /* If NOP or illegal instruction, dispatch the instruction directly to the completion pipe */
-    if (fe_nop_v_i | be_nop_v_i | me_nop_v_i | illegal_instr) 
+    if (fe_nop_v_i | be_nop_v_i | me_nop_v_i) 
       begin
         decode             = '0;
         decode.fe_nop_v    = fe_nop_v_i;
         decode.be_nop_v    = be_nop_v_i;
         decode.me_nop_v    = me_nop_v_i;
         decode.pipe_comp_v = 1'b1;
+
+        illegal_instr = '0;
       end 
-    else 
-      begin 
-        decode.instr_v = 1'b1;
-      end
+    else
+      if (illegal_instr)
+        begin
+          decode = '0;
+        end
+      else 
+        begin 
+          decode.instr_v = 1'b1;
+        end
   end
 
 // Runtime assertions

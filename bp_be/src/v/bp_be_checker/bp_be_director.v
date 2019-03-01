@@ -82,6 +82,15 @@ module bp_be_director
    , output                            chk_flush_fe_o
    , output                            chk_dequeue_fe_o
    , output                            chk_roll_fe_o
+
+   // CSR interface
+   , input [reg_data_width_lp-1:0]    mtvec_i
+   , input                            mtvec_w_v_i
+   , output [reg_data_width_lp-1:0]   mtvec_o
+
+   , input [reg_data_width_lp-1:0]    mepc_i
+   , input                            mepc_w_v_i
+   , output [reg_data_width_lp-1:0]   mepc_o
   );
 
 // Declare parameterized structures
@@ -108,18 +117,22 @@ assign fe_cmd_o    = fe_cmd;
 assign fe_cmd_v_o  = fe_cmd_v;
 
 // Declare intermediate signals
-logic [eaddr_width_lp-1:0]              npc_plus4, npc_expected;
+logic [eaddr_width_lp-1:0]              npc_plus4;
 logic [eaddr_width_lp-1:0]              npc_n, npc_r;
 logic                                   npc_mismatch_v;
 logic [branch_metadata_fwd_width_p-1:0] branch_metadata_fwd_r;
+logic [reg_data_width_lp-1:0]           mepc_mux_lo;
 
 // Control signals
 logic                      npc_w_v , btaken_v  , redirect_pending;
-logic [eaddr_width_lp-1:0] br_mux_o, miss_mux_o, exception_mux_o, ret_mux_o;
+logic [eaddr_width_lp-1:0] br_mux_o, roll_mux_o, ret_mux_o;
 
 // Module instantiations
 // Update the NPC on a valid instruction in ex1 or a cache miss
-assign npc_w_v = calc_status.ex1_v | (calc_status.mem3_cache_miss_v);
+assign npc_w_v = calc_status.ex1_v 
+                 | calc_status.mem3_cache_miss_v 
+                 | calc_status.mem3_exception_v 
+                 | calc_status.mem3_ret_v;
 bsg_dff_reset_en 
  #(.width_p(eaddr_width_lp)
    ,.reset_val_p(pc_entry_point_lp)     
@@ -139,8 +152,8 @@ bsg_mux
    ,.els_p(2)   
    )
  exception_mux
-  (.data_i({ret_mux_o, miss_mux_o})
-   ,.sel_i(calc_status.mem3_exception_v)
+  (.data_i({ret_mux_o, roll_mux_o})
+   ,.sel_i(calc_status.mem3_exception_v | calc_status.mem3_ret_v)
    ,.data_o(npc_n)
    );
 
@@ -148,10 +161,10 @@ bsg_mux
  #(.width_p(eaddr_width_lp)
    ,.els_p(2)
    )
- miss_mux
+ roll_mux
   (.data_i({calc_status.mem3_pc, br_mux_o})
    ,.sel_i(calc_status.mem3_cache_miss_v)
-   ,.data_o(miss_mux_o)
+   ,.data_o(roll_mux_o)
    );
 
 assign npc_plus4 = npc_r + eaddr_width_lp'(4);
@@ -171,7 +184,7 @@ bsg_mux
    ,.els_p(2)
    )
  ret_mux
-  (.data_i()
+  (.data_i({mepc_o, mtvec_o})
    ,.sel_i(calc_status.mem3_ret_v)
    ,.data_o(ret_mux_o)
    );
@@ -191,8 +204,7 @@ bsg_dff_en
 //   keep on sending redirects...
 assign npc_mismatch_v = (expected_npc_o != calc_status.isd_pc);
 bsg_dff_reset_en
- #(.width_p(1)
-   )
+ #(.width_p(1))
  redirect_pending_reg
   (.clk_i(clk_i)
    ,.reset_i(reset_i)
@@ -200,6 +212,37 @@ bsg_dff_reset_en
 
    ,.data_i(npc_mismatch_v)
    ,.data_o(redirect_pending)
+   );
+
+
+bsg_dff_en
+ #(.width_p(reg_data_width_lp))
+ mtvec_csr_reg
+  (.clk_i(clk_i)
+   ,.en_i(mtvec_w_v_i)
+
+   ,.data_i(mtvec_i)
+   ,.data_o(mtvec_o)
+   );
+
+bsg_dff_en
+ #(.width_p(reg_data_width_lp))
+ mepc_csr_reg
+  (.clk_i(clk_i)
+   ,.en_i(mepc_w_v_i | calc_status.mem3_exception_v)
+   
+   ,.data_i(mepc_mux_lo)
+   ,.data_o(mepc_o)
+   );
+
+bsg_mux
+ #(.width_p(reg_data_width_lp)
+   ,.els_p(2)
+   )
+ mepc_mux
+  (.data_i({calc_status.mem3_pc, mepc_i})
+   ,.sel_i(calc_status.mem3_exception_v)
+   ,.data_o(mepc_mux_lo)
    );
 
 // Generate control signals
@@ -219,7 +262,7 @@ always_comb
     fe_cmd_v = 1'b0;
 
     // Redirect the pc if there's an NPC mismatch
-    if(calc_status.isd_v & npc_mismatch_v) 
+    if (calc_status.isd_v & npc_mismatch_v) 
       begin : pc_redirect
         fe_cmd.opcode                                   = e_op_pc_redirection;
         fe_cmd_pc_redirect_operands.pc                  = expected_npc_o;
@@ -237,7 +280,7 @@ always_comb
         fe_cmd_v = fe_cmd_ready_i & ~chk_roll_fe_o & ~redirect_pending;
       end 
     // Send an attaboy if there's a correct prediction
-    else if(calc_status.isd_v & ~npc_mismatch_v & calc_status.int1_br_or_jmp) 
+    else if (calc_status.isd_v & ~npc_mismatch_v & calc_status.int1_br_or_jmp) 
       begin : attaboy
         fe_cmd.opcode                      = e_op_attaboy;
         fe_cmd_attaboy.pc                  = calc_status.isd_pc;

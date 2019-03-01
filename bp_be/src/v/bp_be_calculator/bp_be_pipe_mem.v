@@ -37,7 +37,8 @@
  *   calculator, mem, mmu, load, store, rv64i, rv64f
  *
  * Notes:
- *   
+ *   Could condense CSR r/w into a single bus to save wires
+ *    
  */
 
 module bp_be_pipe_mem 
@@ -83,9 +84,17 @@ module bp_be_pipe_mem
    , input [reg_data_width_lp-1:0]  mtime_i
    , input [reg_data_width_lp-1:0]  minstret_i
 
+   , output [reg_data_width_lp-1:0] mtval_o
+   , output                         mtval_w_v_o
+   , input [reg_data_width_lp-1:0]  mtval_i
+
    , output [reg_data_width_lp-1:0] mtvec_o
-   , input  [reg_data_width_lp-1:0] mtvec_i
    , output                         mtvec_w_v_o
+   , input  [reg_data_width_lp-1:0] mtvec_i
+
+   , output [reg_data_width_lp-1:0] mepc_o
+   , output                         mepc_w_v_o
+   , input [reg_data_width_lp-1:0]  mepc_i
    );
 
 // Declare parameterizable structs
@@ -139,6 +148,10 @@ assign mmu_resp_ready_o = 1'b1;
 assign cache_miss_o     = mmu_resp.exception.cache_miss_v;
 assign mtvec_o          = rs1_r;
 assign mtvec_w_v_o      = decode_r.mtvec_rw_v;
+assign mtval_o          = rs1_r;
+assign mtval_w_v_o      = decode_r.mtval_rw_v;
+assign mepc_o           = rs1_r;
+assign mepc_w_v_o       = decode_r.mepc_rw_v;
 
 always_comb
   begin
@@ -147,6 +160,8 @@ always_comb
     else   if (decode_r.mtime_r_v)    result = mtime_i;
     else   if (decode_r.minstret_r_v) result = minstret_i;
     else   if (decode_r.mtvec_rw_v)   result = mtvec_i;
+    else   if (decode_r.mtval_rw_v)   result = mtval_i;
+    else   if (decode_r.mepc_rw_v)    result = mepc_i;
     else   if (mmu_resp_v_i)          result = mmu_resp.data;
     else                              result = '0;
   end
