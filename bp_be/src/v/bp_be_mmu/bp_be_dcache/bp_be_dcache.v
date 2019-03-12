@@ -417,6 +417,7 @@ module bp_be_dcache
   assign wbuf_entry_in.way_id = store_hit_way;
 
   if (data_width_p == 64) begin
+
     assign wbuf_entry_in.data = double_op_tv_r
       ? data_tv_r
       : (word_op_tv_r
@@ -441,6 +442,50 @@ module bp_be_dcache
              (~paddr_tv_r[2] & ~paddr_tv_r[1] & paddr_tv_r[0]),
              (~paddr_tv_r[2] & ~paddr_tv_r[1] & ~paddr_tv_r[0])
             }));
+
+
+/**********************************************************************************************
+always_comb begin
+	if (double_op_tv_r) begin
+	wbuf_entry_in.data = data_tv_r;
+	end
+	else if (word_op_tv_r) begin
+	wbuf_entry_in.data = {2{data_tv_r[0+:32]}};
+	end
+	else if (half_op_tv_r) begin
+	wbuf_entry_in.data = {4{data_tv_r[0+:16]}};
+	end
+	else begin
+	wbuf_entry_in.data = {8{data_tv_r[0+:8]}};
+	end
+	end
+
+always_comb begin
+	if (double_op_tv_r) begin
+	wbuf_entry_in.mask = 8'b1111_1111;
+	end
+	else if (word_op_tv_r) begin
+	wbuf_entry_in.mask = {{4{paddr_tv_r[2]}}, {4{~paddr_tv_r[2]}}};
+	end
+	else if (half_op_tv_r) begin
+	wbuf_entry_in.mask = {{2{paddr_tv_r[2] & paddr_tv_r[1]}}, {2{paddr_tv_r[2] & ~paddr_tv_r[1]}},
+             {2{~paddr_tv_r[2] & paddr_tv_r[1]}}, {2{~paddr_tv_r[2] & ~paddr_tv_r[1]}}};
+	end
+	else begin
+	wbuf_entry_in.mask = {(paddr_tv_r[2] & paddr_tv_r[1] & paddr_tv_r[0]), 
+             (paddr_tv_r[2] & paddr_tv_r[1] & ~paddr_tv_r[0]),
+             (paddr_tv_r[2] & ~paddr_tv_r[1] & paddr_tv_r[0]),
+             (paddr_tv_r[2] & ~paddr_tv_r[1] & ~paddr_tv_r[0]),
+             (~paddr_tv_r[2] & paddr_tv_r[1] & paddr_tv_r[0]),
+             (~paddr_tv_r[2] & paddr_tv_r[1] & ~paddr_tv_r[0]),
+             (~paddr_tv_r[2] & ~paddr_tv_r[1] & paddr_tv_r[0]),
+             (~paddr_tv_r[2] & ~paddr_tv_r[1] & ~paddr_tv_r[0])
+            };
+	end
+	end
+
+
+***********************************************************************************************/
   end
 
   // stat_mem {lru, dirty}
@@ -660,6 +705,31 @@ module bp_be_dcache
             ? {{48{half_sigext}}, data_half_selected}
             : {{56{byte_sigext}}, data_byte_selected})))
       : 64'b0;
+/**********************************************************************************
+always_comb begin
+	if (load_op_tv_r)begin
+		if (double_op_tv_r) begin
+		 data_o = bypass_data_masked;
+		end
+		else if (word_op_tv_r) begin
+		 data_o = {{32{word_sigext}}, data_word_selected};
+		end
+		else if (half_op_tv_r) begin
+		 data_o = {{48{half_sigext}}, data_half_selected};
+		end
+		else begin
+		 data_o = {{56{byte_sigext}}, data_byte_selected};
+		end
+		end
+		else begin
+		 data_o = 64'b0;
+		end
+	end
+
+
+
+
+***********************************************************************************/
   end
  
   // ctrl logic
@@ -680,17 +750,46 @@ module bp_be_dcache
     : (wbuf_yumi_li
       ? wbuf_data_mem_v
       : {ways_p{lce_data_mem_pkt_yumi_li}});
+/*************************************************************
 
+always_comb begin
+
+    if (load_op & tl_we) begin
+	data_mem_v_li = {ways_p{1'b1}};
+	end
+    else if (wbuf_yumi_li)begin
+	 data_mem_v_li = wbuf_data_mem_v;
+	end
+    else begin
+	 data_mem_v_li = {ways_p{lce_data_mem_pkt_yumi_li}};
+	end
+end
+***************************************************************/
   assign data_mem_w_li = {ways_p{(wbuf_yumi_li | (lce_data_mem_pkt_yumi_li & lce_data_mem_pkt.write_not_read))}};
 
   logic [ways_p-1:0][data_width_p-1:0] lce_data_mem_write_data;
 
   for (genvar i = 0; i < ways_p; i++) begin
-    assign data_mem_addr_li[i] = (load_op & tl_we)
+    /*assign data_mem_addr_li[i] = (load_op & tl_we)
       ? {addr_index, addr_word_offset}
       : (wbuf_yumi_li
         ? {wbuf_entry_out_index, wbuf_entry_out_word_offset}
-        : {lce_data_mem_pkt.index, lce_data_mem_pkt.way_id ^ ((word_offset_width_lp)'(i))});
+        : {lce_data_mem_pkt.index, lce_data_mem_pkt.way_id ^ ((word_offset_width_lp)'(i))});*/
+/********************************************************************/
+
+always_comb begin
+
+	if (load_op & tl_we) begin
+	  data_mem_addr_li[i] = {addr_index, addr_word_offset};
+	end
+	else if (wbuf_yumi_li) begin
+	  data_mem_addr_li[i] = {wbuf_entry_out_index, wbuf_entry_out_word_offset};
+	end
+	else begin
+	  data_mem_addr_li[i] = {lce_data_mem_pkt.index, lce_data_mem_pkt.way_id ^ ((word_offset_width_lp)'(i))};
+	end
+	end
+/******************************************************************/
 
     bsg_mux
       #(.els_p(ways_p)
